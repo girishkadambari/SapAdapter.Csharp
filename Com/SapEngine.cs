@@ -5,11 +5,32 @@ namespace SapAdapter.Com;
 
 /// <summary>
 /// Provides access to the SAP GUI Scripting Engine via COM interop.
-/// No external packages needed — uses native .NET Marshal calls.
+/// Uses P/Invoke to oleaut32.dll since Marshal.GetActiveObject was removed in .NET 5+.
 /// </summary>
 public static class SapEngine
 {
     private static readonly ILogger Log = Serilog.Log.ForContext(typeof(SapEngine));
+
+    // P/Invoke declarations for COM activation (replaces Marshal.GetActiveObject)
+    [DllImport("oleaut32.dll", PreserveSig = false)]
+    private static extern void GetActiveObject(ref Guid rclsid, IntPtr pvReserved, [MarshalAs(UnmanagedType.IUnknown)] out object ppunk);
+
+    [DllImport("ole32.dll")]
+    private static extern int CLSIDFromProgID([MarshalAs(UnmanagedType.LPWStr)] string lpszProgID, out Guid lpclsid);
+
+    /// <summary>
+    /// .NET 8 replacement for Marshal.GetActiveObject(progId).
+    /// Looks up the CLSID from the ProgID, then gets the running COM object.
+    /// </summary>
+    private static object GetActiveObject(string progId)
+    {
+        int hr = CLSIDFromProgID(progId, out Guid clsid);
+        if (hr < 0)
+            Marshal.ThrowExceptionForHR(hr);
+
+        GetActiveObject(ref clsid, IntPtr.Zero, out object obj);
+        return obj;
+    }
 
     /// <summary>
     /// Gets the SAP GUI Scripting Engine from the running SAP GUI process.
@@ -20,7 +41,7 @@ public static class SapEngine
         try
         {
             Log.Debug("Acquiring SAP GUI COM object...");
-            dynamic sapGui = Marshal.GetActiveObject("SAPGUI");
+            dynamic sapGui = GetActiveObject("SAPGUI");
             dynamic engine = sapGui.GetScriptingEngine;
             Log.Debug("SAP GUI Scripting Engine acquired successfully");
             return engine;
