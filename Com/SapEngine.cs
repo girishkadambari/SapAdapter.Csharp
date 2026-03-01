@@ -16,18 +16,17 @@ public static class SapEngine
     /// </summary>
     public static dynamic GetScriptingEngine()
     {
+        return SafeCom.Execute(DiscoverScriptingEngine, "Discover SAP Scripting Engine");
+    }
+
+    private static dynamic DiscoverScriptingEngine()
+    {
         // Debug Environment
         Log.Debug("Environment: User={User}, Process={Proc}, Arch={Arch}", 
             Environment.UserName, 
             System.Diagnostics.Process.GetCurrentProcess().ProcessName,
             RuntimeInformation.ProcessArchitecture);
         
-        // Ensure STA Thread
-        if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
-        {
-            Log.Warning("Current thread is NOT in STA apartment. COM calls might fail.");
-        }
-
         // We try these names in order
         var names = new[] { "SAPGUI", "SapGui.Application", "SAPGUISERVER" };
 
@@ -144,8 +143,8 @@ public static class SapEngine
         try
         {
             var engine = GetScriptingEngine();
-            var conn = engine.Children(connectionIndex);
-            var session = conn.Children(sessionIndex);
+            var conn = SafeCom.Execute(() => engine.Children(connectionIndex), "get connection " + connectionIndex);
+            var session = SafeCom.Execute(() => conn.Children(sessionIndex), "get session " + sessionIndex);
             return session;
         }
         catch (Models.SapException) { throw; }

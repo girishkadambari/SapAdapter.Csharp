@@ -30,7 +30,9 @@ public static class WaitHelper
                     // Additional check for "Please wait" in status bar
                     try
                     {
-                        var statusBar = session.ActiveWindow?.StatusBar;
+                        var win = SafeCom.Execute(() => session.ActiveWindow, "get active window");
+                        var statusBar = win != null ? SafeCom.Execute(() => win.StatusBar, "get status bar") : null;
+                        
                         if (statusBar != null)
                         {
                             string text = SafeCom.Execute(() => (string)(statusBar.Text ?? ""), "read status bar text");

@@ -49,11 +49,11 @@ public class SessionRegistry
         try
         {
             var engine = Com.SapEngine.GetScriptingEngine();
-            int connCount = engine.Children.Count;
+            int connCount = Com.SafeCom.Execute(() => engine.Children.Count, "get connection count");
             if (connCount > 0)
             {
-                var conn = engine.Children(0);
-                int sesCount = conn.Children.Count;
+                var conn = Com.SafeCom.Execute(() => engine.Children(0), "get connection 0");
+                int sesCount = Com.SafeCom.Execute(() => conn.Children.Count, "get session count");
                 if (sesCount > 0)
                 {
                     Register(sessionId, 0, 0);
@@ -82,13 +82,13 @@ public class SessionRegistry
         var engine = Com.SapEngine.GetScriptingEngine();
         var result = new List<Models.SessionListItem>();
 
-        int connCount = engine.Children.Count;
+        int connCount = Com.SafeCom.Execute(() => engine.Children.Count, "get connection count");
         Log.Debug("Found {Count} connections", connCount);
 
         for (int i = 0; i < connCount; i++)
         {
-            var conn = engine.Children(i);
-            int sesCount = conn.Children.Count;
+            var conn = Com.SafeCom.Execute(() => engine.Children(i), "get connection " + i);
+            int sesCount = Com.SafeCom.Execute(() => conn.Children.Count, "get session count");
 
             for (int j = 0; j < sesCount; j++)
             {
