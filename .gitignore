@@ -1,0 +1,30 @@
+# .NET build outputs
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+*.sln.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+
+# Logs & Artifacts
+logs/
+artifacts/
+
+# OS files
+.DS_Store
+Thumbs.db
