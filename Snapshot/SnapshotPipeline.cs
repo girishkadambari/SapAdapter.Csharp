@@ -56,7 +56,7 @@ public class SnapshotPipeline
         var win = SafeCom.Execute(() => session.ActiveWindow, "get ActiveWindow");
         var info = SafeCom.Execute(() => session.Info, "get session info");
 
-        var snapshotId = Guid.NewGuid().ToString("N")[..21]; // ~nanoid length
+        var snapshotId = Guid.NewGuid().ToString("N").Substring(0, 21); // ~nanoid length
 
         var snapshot = new Models.SapScreenSnapshot
         {

@@ -92,22 +92,29 @@ public class SessionRegistry
 
             for (int j = 0; j < sesCount; j++)
             {
-                var session = conn.Children(j);
-                var info = session.Info;
-
-                var item = new Models.SessionListItem
+                try
                 {
-                    SessionId = $"{i}-{j}",
-                    SystemId = Com.SafeCom.Execute(() => (string)info.SystemName, "get SID"),
-                    Client = Com.SafeCom.Execute(() => (string)info.Client, "get client"),
-                    User = Com.SafeCom.Execute(() => (string)info.User, "get user"),
-                    Transaction = Com.SafeCom.Execute(() => (string)info.Transaction, "get tx"),
-                    WindowTitle = Com.SafeCom.Execute(() => (string)session.ActiveWindow.Text, "get title"),
-                };
+                    var session = conn.Children(j);
+                    var info = session.Info;
 
-                result.Add(item);
-                Log.Debug("Found session: {SessionId} — {User}@{SID} tx:{Tx}",
-                    item.SessionId, item.User, item.SystemId, item.Transaction);
+                    var item = new Models.SessionListItem
+                    {
+                        SessionId = $"{i}-{j}",
+                        SystemId = Com.SafeCom.Execute(() => (string)info.SystemName, "get SID"),
+                        Client = Com.SafeCom.Execute(() => (string)info.Client, "get client"),
+                        User = Com.SafeCom.Execute(() => (string)info.User, "get user"),
+                        Transaction = Com.SafeCom.Execute(() => (string)info.Transaction, "get tx"),
+                        WindowTitle = Com.SafeCom.Execute(() => (string)(session.ActiveWindow?.Text ?? "SAP"), "get title"),
+                    };
+
+                    result.Add(item);
+                    Log.Debug("Found session: {SessionId} — {User}@{SID} tx:{Tx}",
+                        item.SessionId, item.User, item.SystemId, item.Transaction);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning("Failed to read session {ConnIdx}-{SesIdx}: {Error}", i, j, ex.Message);
+                }
             }
         }
 
