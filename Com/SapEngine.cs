@@ -43,7 +43,7 @@ public static class SapEngine
         }
 
         // We try these names in order
-        var names = new[] { "SapGui.Application", "SAPGUI", "SAPGUISERVER" };
+        var names = new[] { "SAPGUI", "SapGui.Application", "SAPGUISERVER" };
 
         foreach (var name in names)
         {
