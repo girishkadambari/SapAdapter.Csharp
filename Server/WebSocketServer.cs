@@ -122,7 +122,15 @@ public class WebSocketServer
 
     private object HandleListSessions()
     {
-        return _sessions.ListSessions();
+        try
+        {
+            return _sessions.ListSessions();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "ListSessions failed (SAP GUI may not be running), returning empty list");
+            return Array.Empty<object>();
+        }
     }
 
     private object HandleAttachSession(Dictionary<string, object?>? payload)
