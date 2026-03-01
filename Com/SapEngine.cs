@@ -1,4 +1,5 @@
 using Serilog;
+using System.Runtime.InteropServices.ComTypes;
 
 namespace SapAdapter.Com;
 
@@ -9,6 +10,13 @@ namespace SapAdapter.Com;
 public static class SapEngine
 {
     private static readonly ILogger Log = Serilog.Log.ForContext(typeof(SapEngine));
+
+    // P/Invoke for manual ROT access in case GetActiveObject fails
+    [DllImport("ole32.dll")]
+    private static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable prot);
+
+    [DllImport("ole32.dll")]
+    private static extern int CreateBindCtx(int reserved, out IBindCtx ppbc);
 
     /// <summary>
     /// Gets the SAP GUI Scripting Engine from the running SAP GUI process.
@@ -35,7 +43,7 @@ public static class SapEngine
         }
 
         // We try these names in order
-        var names = new[] { "SAPGUI", "SapGui.Application", "SAPGUISERVER" };
+        var names = new[] { "SapGui.Application", "SAPGUI", "SAPGUISERVER" };
 
         foreach (var name in names)
         {
@@ -94,6 +102,44 @@ public static class SapEngine
             }
         }
 
+        // Strategy 3: Manual ROT Enumeration (The "Deep Search")
+        Log.Information("Searching Running Object Table (ROT) manually...");
+        try 
+        {
+            var manuallyFound = FindInROT();
+            if (manuallyFound != null)
+            {
+                var engine = ExtractEngine(manuallyFound);
+                if (engine != null) return engine;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Manual ROT search failed: {Error}", ex.Message);
+        }
+
+        // Strategy 4: Last Resort - Create Instance
+        // Sometimes we need to create the instance to "kickstart" the COM server
+        try
+        {
+            Log.Information("Attempting to CreateInstance of SapGui.Application as last resort...");
+            Type? sapType = Type.GetTypeFromProgID("SapGui.Application");
+            if (sapType != null)
+            {
+                dynamic sapApp = Activator.CreateInstance(sapType)!;
+                var engine = ExtractEngine(sapApp);
+                if (engine != null)
+                {
+                    Log.Information("SAP GUI Scripting Engine acquired via CreateInstance");
+                    return engine;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("CreateInstance fallback failed: {Error}", ex.Message);
+        }
+
         Log.Error("All COM detection strategies failed. SAP GUI may not be running or scripting is disabled.");
         throw new Models.SapException(
             Models.SapErrorCodes.SapNotRunning,
@@ -102,6 +148,28 @@ public static class SapEngine
             "2. Scripting is enabled in SAP GUI (Options > Accessibility & Scripting > Scripting).\n" +
             "3. Adapter and SAP GUI are running as the same user."
         );
+    }
+
+    private static dynamic? FindInROT()
+    {
+        GetRunningObjectTable(0, out var rot);
+        rot.EnumRunning(out var enumMoniker);
+        IMoniker[] monikers = new IMoniker[1];
+        IntPtr fetched = IntPtr.Zero;
+
+        while (enumMoniker.Next(1, monikers, fetched) == 0)
+        {
+            CreateBindCtx(0, out var bindCtx);
+            monikers[0].GetDisplayName(bindCtx, null, out var displayName);
+
+            if (displayName.Contains("SAPGUI") || displayName.Contains("SapGui") || displayName.Contains("sapgui"))
+            {
+                Log.Information("Found candidate in ROT: {Name}", displayName);
+                rot.GetObject(monikers[0], out var obj);
+                if (obj != null) return obj;
+            }
+        }
+        return null;
     }
 
     /// <summary>
