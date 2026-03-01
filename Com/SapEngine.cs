@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using Serilog;
 
@@ -8,11 +5,33 @@ namespace SapAdapter.Com;
 
 /// <summary>
 /// Provides access to the SAP GUI Scripting Engine via COM interop.
-/// Uses Marshal.GetActiveObject (available on .NET Framework 4.8).
+/// Uses P/Invoke to oleaut32.dll since Marshal.GetActiveObject was removed in .NET 5+.
+/// Supports multiple SAP GUI versions (7.x, 8.x+) via different COM strategies.
 /// </summary>
 public static class SapEngine
 {
     private static readonly ILogger Log = Serilog.Log.ForContext(typeof(SapEngine));
+
+    // P/Invoke declarations for COM activation (replaces Marshal.GetActiveObject in .NET 8)
+    [DllImport("oleaut32.dll", PreserveSig = false)]
+    private static extern void GetActiveObject(ref Guid rclsid, IntPtr pvReserved, [MarshalAs(UnmanagedType.IUnknown)] out object ppunk);
+
+    [DllImport("ole32.dll")]
+    private static extern int CLSIDFromProgID([MarshalAs(UnmanagedType.LPWStr)] string lpszProgID, out Guid lpclsid);
+
+    /// <summary>
+    /// Equivalent to Marshal.GetActiveObject(progId) — works on .NET 8.
+    /// Looks up the CLSID from the ProgID, then gets the running COM object.
+    /// </summary>
+    private static object MarshalGetActiveObject(string progId)
+    {
+        int hr = CLSIDFromProgID(progId, out Guid clsid);
+        if (hr < 0)
+            Marshal.ThrowExceptionForHR(hr);
+
+        GetActiveObject(ref clsid, IntPtr.Zero, out object obj);
+        return obj;
+    }
 
     /// <summary>
     /// Gets the SAP GUI Scripting Engine from the running SAP GUI process.
@@ -20,32 +39,29 @@ public static class SapEngine
     /// </summary>
     public static dynamic GetScriptingEngine()
     {
-        // Strategy 1: Direct SAPGUI ProgID via Marshal.GetActiveObject
+        // Strategy 1: Direct SAPGUI ProgID (SAP GUI 7.x and some 8.x)
         try
         {
-            Log.Debug("Trying Marshal.GetActiveObject(\"SAPGUI\")...");
-            dynamic sapGui = Marshal.GetActiveObject("SAPGUI");
+            Log.Debug("Trying direct ProgID: SAPGUI...");
+            dynamic sapGui = MarshalGetActiveObject("SAPGUI");
             dynamic engine = sapGui.GetScriptingEngine;
-            Log.Information("SAP GUI Scripting Engine acquired via Marshal.GetActiveObject");
+            Log.Information("SAP GUI Scripting Engine acquired via SAPGUI ProgID");
             return engine;
         }
-        catch (COMException ex)
+        catch (Exception ex)
         {
-            Log.Debug("Direct SAPGUI ProgID failed: {Error}", ex.Message);
+            Log.Debug("SAPGUI ProgID failed: {Error}", ex.Message);
         }
 
-        // Strategy 2: SapROTWr.SapROTWrapper — create instance, then look up in ROT
+        // Strategy 2: SapROTWr.SapROTWrapper — the official SAP approach for newer versions.
+        // IMPORTANT: This is a COM class you CREATE (Activator.CreateInstance),
+        // NOT a running object you look up with GetActiveObject.
+        // Then call GetROTEntry("SAPGUI") to find the SAP GUI in the Running Object Table.
         try
         {
-            Log.Debug("Trying SapROTWr.SapROTWrapper...");
+            Log.Debug("Trying SapROTWr.SapROTWrapper via Activator.CreateInstance...");
 
             Type? rotType = Type.GetTypeFromProgID("SapROTWr.SapROTWrapper");
-            if (rotType == null)
-            {
-                Log.Debug("SapROTWr ProgID not registered, searching SAP GUI folder...");
-                rotType = TryLoadROTWrapperFromDisk();
-            }
-
             if (rotType != null)
             {
                 dynamic rotWrapper = Activator.CreateInstance(rotType)!;
@@ -53,10 +69,31 @@ public static class SapEngine
                 if (sapGui != null)
                 {
                     dynamic engine = sapGui.GetScriptingEngine();
-                    Log.Information("SAP GUI Scripting Engine acquired via SapROTWr");
+                    Log.Information("SAP GUI Scripting Engine acquired via SapROTWr.SapROTWrapper");
                     return engine;
                 }
-                Log.Debug("SAPGUI entry not found in ROT");
+                else
+                {
+                    Log.Debug("SAPGUI entry not found in ROT (SAP GUI may not be running)");
+                }
+            }
+            else
+            {
+                Log.Debug("SapROTWr.SapROTWrapper ProgID not registered, trying DLL from disk...");
+
+                // Fallback: load SapROTWr.dll directly from SAP GUI installation folder
+                var rotTypeFromDisk = TryLoadROTWrapperFromDisk();
+                if (rotTypeFromDisk != null)
+                {
+                    dynamic rotWrapper = Activator.CreateInstance(rotTypeFromDisk)!;
+                    dynamic sapGui = rotWrapper.GetROTEntry("SAPGUI");
+                    if (sapGui != null)
+                    {
+                        dynamic engine = sapGui.GetScriptingEngine();
+                        Log.Information("SAP GUI Scripting Engine acquired via SapROTWr.dll (loaded from disk)");
+                        return engine;
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -64,16 +101,16 @@ public static class SapEngine
             Log.Debug("SapROTWr strategy failed: {Error}", ex.Message);
         }
 
-        // Strategy 3: SAPGUISERVER ProgID
+        // Strategy 3: SAPGUISERVER ProgID (rare, server-side installations)
         try
         {
-            Log.Debug("Trying Marshal.GetActiveObject(\"SAPGUISERVER\")...");
-            dynamic sapGui = Marshal.GetActiveObject("SAPGUISERVER");
+            Log.Debug("Trying direct ProgID: SAPGUISERVER...");
+            dynamic sapGui = MarshalGetActiveObject("SAPGUISERVER");
             dynamic engine = sapGui.GetScriptingEngine;
-            Log.Information("SAP GUI Scripting Engine acquired via SAPGUISERVER");
+            Log.Information("SAP GUI Scripting Engine acquired via SAPGUISERVER ProgID");
             return engine;
         }
-        catch (COMException ex)
+        catch (Exception ex)
         {
             Log.Debug("SAPGUISERVER ProgID failed: {Error}", ex.Message);
         }
@@ -82,12 +119,12 @@ public static class SapEngine
         throw new Models.SapException(
             Models.SapErrorCodes.SapNotRunning,
             "Cannot connect to SAP GUI. Ensure SAP GUI is running and scripting is enabled. " +
-            "If needed, register SapROTWr.dll: regsvr32 \"C:\\Program Files (x86)\\SAP\\FrontEnd\\SAPgui\\SapROTWr.dll\""
+            "If needed, register the ROT wrapper as Admin: regsvr32 \"C:\\Program Files (x86)\\SAP\\FrontEnd\\SAPgui\\SapROTWr.dll\""
         );
     }
 
     /// <summary>
-    /// Fallback: Search for SapROTWr.dll in common SAP GUI installation directories.
+    /// Searches for SapROTWr.dll in common SAP GUI installation directories.
     /// </summary>
     private static Type? TryLoadROTWrapperFromDisk()
     {
