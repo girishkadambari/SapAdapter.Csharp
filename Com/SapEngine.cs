@@ -34,34 +34,60 @@ public static class SapEngine
 
     /// <summary>
     /// Gets the SAP GUI Scripting Engine from the running SAP GUI process.
-    /// Equivalent to: winax.GetObject("SAPGUI").GetScriptingEngine
+    /// Tries multiple COM strategies to handle different SAP GUI versions.
     /// </summary>
     public static dynamic GetScriptingEngine()
     {
+        // Strategy 1: Direct SAPGUI ProgID (SAP GUI 7.x and some 8.x)
+        var result = TryGetEngine("SAPGUI", sapGui => sapGui.GetScriptingEngine);
+        if (result != null) return result;
+
+        // Strategy 2: SapROTWr.SapROTWrapper (SAP GUI 8.x+ / newer installations)
+        result = TryGetEngine("SapROTWr.SapROTWrapper", wrapper =>
+        {
+            dynamic rot = wrapper;
+            dynamic sapGui = rot.GetROTEntry("SAPGUI");
+            if (sapGui == null)
+                throw new COMException("SAPGUI not found in ROT");
+            return sapGui.GetScriptingEngine();
+        });
+        if (result != null) return result;
+
+        // Strategy 3: SAPGUISERVER ProgID (rare, server-side installations)
+        result = TryGetEngine("SAPGUISERVER", sapGui => sapGui.GetScriptingEngine);
+        if (result != null) return result;
+
+        Log.Error("All COM strategies failed — SAP GUI may not be running or scripting is disabled");
+        throw new Models.SapException(
+            Models.SapErrorCodes.SapNotRunning,
+            "Cannot connect to SAP GUI. Ensure SAP GUI is running and scripting is enabled " +
+            "(Options → Accessibility & Scripting → Scripting → Enable Scripting)."
+        );
+    }
+
+    /// <summary>
+    /// Attempts to get the scripting engine using a specific ProgID.
+    /// Returns null if the ProgID is not found or the object can't be retrieved.
+    /// </summary>
+    private static dynamic? TryGetEngine(string progId, Func<dynamic, dynamic> extractor)
+    {
         try
         {
-            Log.Debug("Acquiring SAP GUI COM object...");
-            dynamic sapGui = GetActiveObject("SAPGUI");
-            dynamic engine = sapGui.GetScriptingEngine;
-            Log.Debug("SAP GUI Scripting Engine acquired successfully");
+            Log.Debug("Trying COM ProgID: {ProgId}", progId);
+            dynamic comObj = GetActiveObject(progId);
+            dynamic engine = extractor(comObj);
+            Log.Information("SAP GUI Scripting Engine acquired via {ProgId}", progId);
             return engine;
-        }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x800401E3))
-        {
-            // MK_E_UNAVAILABLE — SAP GUI not running
-            Log.Error("SAP GUI is not running or scripting is disabled");
-            throw new Models.SapException(
-                Models.SapErrorCodes.SapNotRunning,
-                "SAP GUI is not running or scripting is disabled"
-            );
         }
         catch (COMException ex)
         {
-            Log.Error(ex, "COM error while getting SAP GUI scripting engine");
-            throw new Models.SapException(
-                Models.SapErrorCodes.ComError,
-                $"Failed to get SAP GUI scripting engine: {ex.Message}"
-            );
+            Log.Debug("ProgID {ProgId} failed: {Error}", progId, ex.Message);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("ProgID {ProgId} failed (non-COM): {Error}", progId, ex.Message);
+            return null;
         }
     }
 
