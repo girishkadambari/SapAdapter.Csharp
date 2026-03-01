@@ -21,12 +21,19 @@ public static class SapEngine
 
     private static dynamic DiscoverScriptingEngine()
     {
-        // Debug Environment
-        Log.Debug("Environment: User={User}, Process={Proc}, Arch={Arch}", 
-            Environment.UserName, 
-            System.Diagnostics.Process.GetCurrentProcess().ProcessName,
-            RuntimeInformation.ProcessArchitecture);
+        // Check if SAP is running at all
+        var sapProcs = System.Diagnostics.Process.GetProcessesByName("saplogon")
+            .Concat(System.Diagnostics.Process.GetProcessesByName("sapgui")).ToList();
         
+        Log.Information("Process Check: Found {Count} SAP processes ({Names})", 
+            sapProcs.Count, 
+            string.Join(", ", sapProcs.Select(p => p.ProcessName).Distinct()));
+
+        if (!sapProcs.Any())
+        {
+            Log.Warning("No 'saplogon' or 'sapgui' processes found. Is SAP GUI open?");
+        }
+
         // We try these names in order
         var names = new[] { "SAPGUI", "SapGui.Application", "SAPGUISERVER" };
 
@@ -46,7 +53,7 @@ public static class SapEngine
             }
             catch (COMException ex)
             {
-                Log.Debug("Native Marshal {Name} failed (HRESULT: 0x{HR:X8})", name, ex.HResult);
+                Log.Information("Native Marshal {Name} failed. HRESULT: 0x{HR:X8} ({Msg})", name, ex.HResult, ex.Message);
             }
             catch (Exception ex)
             {
@@ -71,7 +78,15 @@ public static class SapEngine
                             return engine;
                         }
                     }
+                    else
+                    {
+                        Log.Information("ROT Wrapper: GetROTEntry('{Name}') returned null", name);
+                    }
                 }
+            }
+            catch (COMException ex)
+            {
+                Log.Information("ROT Wrapper lookup for {Name} failed. HRESULT: 0x{HR:X8}", name, ex.HResult);
             }
             catch (Exception ex)
             {
